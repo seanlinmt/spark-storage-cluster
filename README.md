@@ -6,8 +6,14 @@ Use this project at your own risk. The author is in no way responsible for any d
 ## Background
 This repository provides the configuration and bootstrap scripts to set up NVMe over Fabrics (NVMe-oF) between 2 DGX Spark nodes through a high-speed ConnectX-7 link. Instead of sharing an entire physical disk, this architecture leverages loop devices (backed by image files) on both machines, which are then combined into a wide, high-performance RAID0 array across the network.
 
+**Use Case:** This shared storage cluster is particularly useful for centrally storing massive files—such as HuggingFace machine learning models or datasets—ensuring you don't have to manage duplicate copies of terabyte-sized files across multiple devices. 
+
+**Note on Docker:** Docker does not natively support GFS2 as an underlying backing file system for its storage driver. If you plan to use this cluster storage for Docker containers, you will need to create another storage layer (like loop-mounting an ext4/xfs image file) on top of the GFS2 mount.
+
 ## How it works
 The architecture relies on a multi-tier storage mapping sequence leveraging NVMe-RDMA and `mdadm` for software RAID.
+
+*(Note: While these scripts map existing image files to loop devices for simplicity and flexibility, utilizing raw LVM (Logical Volume Manager) block volumes instead of loop devices is another highly recommended alternative for production environments.)*
 
 1. **Local Loop Setup:** Both Node 1 and Node 2 map a local image file (`/shared_pool.img`) to a specific loop device (e.g. `loop27`).
 2. **First Export (Node 2 -> Node 1):** Node 2 configures an NVMe-oF target and exports its local loop device over the network to Node 1.
@@ -59,7 +65,17 @@ dd if=/dev/zero of=/shared_pool.img bs=1M count=0 seek=102400
 losetup /dev/loop27 /shared_pool.img
 ```
 
-### 3. Configure Cluster Quorum & STONITH
+### 3. Configure PCS Authentication
+Before configuring the cluster, set the password for the `hacluster` user on both nodes. This user is created automatically when you installed the pacemaker packages.
+```bash
+# On both nodes, set the password
+sudo passwd hacluster
+
+# On Node 1 ONLY, authenticate pcs with both nodes
+pcs host auth node1 node2 -u hacluster
+```
+
+### 4. Configure Cluster Quorum & STONITH
 Since this is a two-node cluster, you must configure Pacemaker to ignore standard quorum requirements. STONITH should be disabled or appropriately configured for a 2-node tiebreaker:
 ```bash
 pcs cluster setup my_cluster node1 node2
@@ -69,7 +85,7 @@ pcs property set stonith-enabled=false
 ```
 *(Note: In production, configure proper STONITH fencing agents instead of disabling it.)*
 
-### 4. Configure the DLM (Distributed Lock Manager)
+### 5. Configure the DLM (Distributed Lock Manager)
 GFS2 requires DLM to coordinate file locks across both concurrent nodes.
 ```bash
 pcs resource create dlm ocf:pacemaker:controld op monitor interval=30s on-fail=fence clone interleave=true ordered=true
