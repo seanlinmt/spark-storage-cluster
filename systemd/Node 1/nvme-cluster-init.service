@@ -1,0 +1,15 @@
+[Unit]
+Description=NVMe-oF Clustered Storage Initialization
+After=network-online.target
+Wants=network-online.target
+Before=corosync.service pacemaker.service remote-fs.pre.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do ip addr show enp1s0f1np1 | grep -q "192.168.177.11" && exit 0; sleep 1; done; echo "RDMA interface not ready"; exit 1'
+ExecStart=/usr/local/bin/nvme-boot-node1.sh
+RemainAfterExit=yes
+TimeoutStartSec=400
+
+[Install]
+WantedBy=multi-user.target
