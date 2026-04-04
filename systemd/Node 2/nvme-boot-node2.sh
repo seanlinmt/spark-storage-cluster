@@ -53,7 +53,9 @@ modprobe nvmet-rdma
 
 mkdir -p "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1"
 echo -n "$LOOP_DEV" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_path"
-echo "c7e2b85e-f0e6-4d0d-bc02-0e86a0b27163" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+# Get the UUID of the underlying device to ensure the export presents a stable, matching identifier
+DEVICE_UUID=$(lsblk -no UUID "$LOOP_DEV")
+echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
 # Host ACLs - only allow Node 1 to import this export

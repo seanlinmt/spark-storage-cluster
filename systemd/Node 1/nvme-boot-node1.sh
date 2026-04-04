@@ -157,7 +157,9 @@ modprobe nvmet-rdma
 
 mkdir -p "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1"
 echo -n "$MD_DEVICE" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_path"
-echo "e1f88c8e-5b2b-4d9f-8a03-7a911a3d9b62" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+# Get the UUID of the underlying device to ensure the export presents a stable, matching identifier
+DEVICE_UUID=$(lsblk -no UUID "$MD_DEVICE")
+echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
 # Host ACLs - restrict to node1 and node2 only (no allow_any_host)
