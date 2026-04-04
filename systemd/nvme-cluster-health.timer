@@ -1,0 +1,12 @@
+[Unit]
+Description=NVMe-oF Cluster Health Check Timer
+Requires=nvme-cluster-init.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

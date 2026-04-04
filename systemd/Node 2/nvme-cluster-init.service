@@ -3,13 +3,23 @@ Description=NVMe-oF Clustered Storage Initialization
 After=network-online.target
 Wants=network-online.target
 Before=corosync.service pacemaker.service remote-fs.pre.target
+StartLimitIntervalSec=300s
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do ip addr show enp1s0f1np1 | grep -q "192.168.177.12" && exit 0; sleep 1; done; echo "RDMA interface not ready"; exit 1'
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do ip addr show enp1s0f0np0 | grep -q "192.168.177.12" && exit 0; sleep 1; done; echo "RDMA interface not ready"; exit 1'
 ExecStart=/usr/local/bin/nvme-boot-node2.sh
 RemainAfterExit=yes
 TimeoutStartSec=400
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=30s
+NotifyAccess=all
+LimitNOFILE=65536
+LimitNPROC=4096
+KillMode=process
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target

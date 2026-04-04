@@ -1,0 +1,13 @@
+[Unit]
+Description=NVMe-oF Cluster Health Monitor
+After=nvme-cluster-init.service
+Requires=nvme-cluster-init.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nvme-cluster-health.sh
+RemainAfterExit=no
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

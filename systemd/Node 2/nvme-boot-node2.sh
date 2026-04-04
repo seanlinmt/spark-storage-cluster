@@ -99,23 +99,44 @@ sleep 5
 REMOTE_NVME=""
 echo "  Scanning for block device matching $REMOTE_SUBSYSTEM..."
 
-for ((i=1; i<=10; i++)); do
-    for subsys in /sys/class/nvme/nvme[1-9]*; do
+for ((i=1; i<=30; i++)); do
+    # First try: Check /sys/class/nvme-subsystem for the device
+    for subsys in /sys/class/nvme-subsystem/nvme-subsys*; do
         [ -e "$subsys/subsysnqn" ] || continue
         if grep -q "$REMOTE_SUBSYSTEM" "$subsys/subsysnqn" 2>/dev/null; then
-            # We found the subsystem, now extract the actual device name
-            for dev_dir in "$subsys"/nvme*n*; do
-                [ -e "$dev_dir" ] || continue
-                dev_name=$(basename "$dev_dir")
+            # We found the subsystem, look for namespace devices (nvme*n* format)
+            for ns_dev in "$subsys"/nvme*n*; do
+                [ -e "$ns_dev" ] || continue
+                dev_name=$(basename "$ns_dev")
                 # Look for the actual block device in /dev/
                 if [ -b "/dev/$dev_name" ]; then
                     REMOTE_NVME="/dev/$dev_name"
+                    echo "    Found via nvme-subsystem: $REMOTE_NVME"
                     break 3
                 fi
             done
         fi
     done
-    sleep 5
+    
+    # Second try: Check /sys/class/nvme directly (fallback)
+    for subsys in /sys/class/nvme/nvme[1-9]*; do
+        [ -e "$subsys/subsysnqn" ] || continue
+        if grep -q "$REMOTE_SUBSYSTEM" "$subsys/subsysnqn" 2>/dev/null; then
+            # We found the subsystem, look for namespace devices
+            for dev_dir in "$subsys"/nvme*n*; do
+                [ -e "$dev_dir" ] || continue
+                dev_name=$(basename "$dev_dir")
+                if [ -b "/dev/$dev_name" ]; then
+                    REMOTE_NVME="/dev/$dev_name"
+                    echo "    Found via nvme class: $REMOTE_NVME"
+                    break 3
+                fi
+            done
+        fi
+    done
+    
+    echo "    Attempt $i/30: Waiting for device to appear..."
+    sleep 2
 done
 
 if [ -z "$REMOTE_NVME" ]; then
@@ -134,6 +155,11 @@ echo "  UUID symlink ready."
 # --- STEP 4: PREPARE MOUNT POINT ---
 echo "[4/4] Preparing mount point..."
 mkdir -p "$MOUNT_POINT"
+
+# Clear any stale Pacemaker standby state so resources can start on this node
+if command -v pcs &>/dev/null; then
+    pcs node unstandby "$NODE2_IP" 2>/dev/null || true
+fi
 
 echo ""
 echo "=========================================="

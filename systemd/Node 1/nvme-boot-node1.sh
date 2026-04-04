@@ -82,29 +82,21 @@ nvme connect -t rdma -a "$NODE2_IP" -s "$NVMET_PORT" -n "$REMOTE_SUBSYSTEM" || t
 udevadm settle
 sleep 3
 
-# --- STEP 3: CONNECT TO NODE 2 ---
-# --- [3/6] Scanning Loop (Echo Trick / set -e Safe) ---
-# --- [3/6] Scanning Loop (The "Echo Trick" Version) ---
 REMOTE_NVME=""
 echo "[3/6] Scanning for block device matching $REMOTE_SUBSYSTEM..."
 
 for ((i=1; i<=30; i++)); do
-    # 1. Find the subsystem directory.
-    # We use ( ... ) || echo "" to ensure the variable assignment
-    # never returns a non-zero exit code to the main shell.
+    # Find the subsystem directory matching our remote NQN
+    # || echo "" keeps pipefail from triggering on empty results
     SUB_DIR=$(grep -l "$REMOTE_SUBSYSTEM" /sys/class/nvme-subsystem/nvme-subsys*/subsysnqn 2>/dev/null | xargs dirname 2>/dev/null || echo "")
 
     if [ -n "$SUB_DIR" ]; then
-        # 2. Find the namespace (e.g., nvme1n2)
-        # We look for a directory entry that isn't nvme0.
-        # Again, we use the || echo "" trick to keep pipefail happy.
-        DEV_NAME=$(find -L "/sys/class/nvme-subsystem/nvme-subsys1" -maxdepth 1 -name "nvme[1-9]*n[1-9]*" -print -quit 2>/dev/null | xargs basename 2>/dev/null || echo "")
+        # Use discovered $SUB_DIR (not hardcoded subsys index) to find namespace
+        DEV_NAME=$(find -L "$SUB_DIR" -maxdepth 1 -name "nvme[1-9]*n[1-9]*" -print -quit 2>/dev/null | xargs basename 2>/dev/null || echo "")
 
         if [ -n "$DEV_NAME" ]; then
-            # Clean any potential whitespace/newlines from xargs
             DEV_NAME=$(echo "$DEV_NAME" | tr -d '[:space:]')
 
-            # Check if the block device is actually ready in /dev
             if [ -b "/dev/$DEV_NAME" ]; then
                 REMOTE_NVME="/dev/$DEV_NAME"
                 echo "    Success: Found $REMOTE_NVME on attempt $i."
@@ -166,12 +158,7 @@ echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enab
 mkdir -p "/sys/kernel/config/nvmet/hosts/$NODE1_HOSTNQN"
 mkdir -p "/sys/kernel/config/nvmet/hosts/$NODE2_HOSTNQN"
 ALLOWED_HOSTS_DIR="/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/allowed_hosts"
-#ln -sf "/sys/kernel/config/nvmet/hosts/$NODE1_HOSTNQN" "$ALLOWED_HOSTS_DIR/"
-#ln -sf "/sys/kernel/config/nvmet/hosts/$NODE2_HOSTNQN" "$ALLOWED_HOSTS_DIR/"
-#echo 0 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/attr_allow_any_host"
-# Disable global access first
 echo 0 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/attr_allow_any_host"
-# Then link the allowed hosts
 ln -sf "/sys/kernel/config/nvmet/hosts/$NODE1_HOSTNQN" "$ALLOWED_HOSTS_DIR/"
 ln -sf "/sys/kernel/config/nvmet/hosts/$NODE2_HOSTNQN" "$ALLOWED_HOSTS_DIR/"
 
@@ -192,6 +179,11 @@ mkdir -p /etc/mdadm
 mdadm --detail --scan > /etc/mdadm/mdadm.conf
 mkdir -p "$MOUNT_POINT"
 echo "mdadm.conf updated. Mount point $MOUNT_POINT ready."
+
+# Clear any stale Pacemaker standby state so resources can start on this node
+if command -v pcs &>/dev/null; then
+    pcs node unstandby "$NODE1_IP" 2>/dev/null || true
+fi
 
 echo ""
 echo "=========================================="
