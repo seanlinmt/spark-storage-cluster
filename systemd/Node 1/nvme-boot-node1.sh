@@ -48,21 +48,21 @@ echo "Cleanup done."
 echo "[2/6] Setting up loop device..."
 
 # Force detach if it exists so we get a clean mapping
-losetup -d /dev/loop27 2>/dev/null || true
+losetup -d "$LOOP_DEVICE" 2>/dev/null || true
 
 # Map the file specifically to loop27
-if ! losetup /dev/loop27 /shared_pool.img; then
-    echo "ERROR: Failed to map /shared_pool.img to /dev/loop27"
+if ! losetup "$LOOP_DEVICE" /shared_pool.img; then
+    echo "ERROR: Failed to map /shared_pool.img to $LOOP_DEVICE"
     exit 1
 fi
 
 # Final check that it has size
-LOOP_SIZE=$(blockdev --getsize64 /dev/loop27)
+LOOP_SIZE=$(blockdev --getsize64 "$LOOP_DEVICE" 2>/dev/null || echo 0)
 if [ "$LOOP_SIZE" -eq 0 ]; then
-    echo "ERROR: /dev/loop27 reports 0 size!"
+    echo "ERROR: $LOOP_DEVICE reports 0 size!"
     exit 1
 fi
-echo "Loop device ready: /dev/loop27 ($((LOOP_SIZE/1024/1024/1024)) GB)"
+echo "Loop device ready: $LOOP_DEVICE ($((LOOP_SIZE/1024/1024/1024)) GB)"
 
 # --- STEP 3: CONNECT TO NODE 2 ---
 echo "[3/6] Waiting for Node 2 ($NODE2_IP) to export $REMOTE_SUBSYSTEM..."
@@ -131,22 +131,22 @@ echo "Remote NVMe device $REMOTE_NVME"
 # --- [4/6] Persistent RAID Assembly ---
 echo "[4/6] Finalizing RAID0 state..."
 
-# 1. Ensure loop27 isn't empty (Safety check)
-LOOP_SIZE=$(blockdev --getsize64 /dev/loop27 2>/dev/null || echo 0)
+# 1. Ensure the loop device isn't empty (Safety check)
+LOOP_SIZE=$(blockdev --getsize64 "$LOOP_DEVICE" 2>/dev/null || echo 0)
 if [ "$LOOP_SIZE" -eq 0 ]; then
-    echo "ERROR: /dev/loop27 is empty. Re-mapping to /shared_pool.img..."
-    losetup -d /dev/loop27 2>/dev/null || true
-    losetup /dev/loop27 /shared_pool.img
+    echo "ERROR: $LOOP_DEVICE is empty. Re-mapping to /shared_pool.img..."
+    losetup -d "$LOOP_DEVICE" 2>/dev/null || true
+    losetup "$LOOP_DEVICE" /shared_pool.img
 fi
 
 # 2. Assemble or Create
 # If both disks have a matching superblock, 'assemble' will work.
-# If one is blank (like our loop27 was), we 'create' to sync them.
-if mdadm --assemble --run --force /dev/md0 /dev/loop27 "$REMOTE_NVME" 2>/dev/null; then
+# If one is blank (like our loop device was), we 'create' to sync them.
+if mdadm --assemble --run --force /dev/md0 "$LOOP_DEVICE" "$REMOTE_NVME" 2>/dev/null; then
     echo "  Success: RAID0 Assembled from existing metadata."
 else
     echo "  No valid RAID found on both legs. Initializing/Syncing now..."
-    mdadm --create --run --force /dev/md0 --level=0 --raid-devices=2 /dev/loop27 "$REMOTE_NVME"
+    mdadm --create --run --force /dev/md0 --level=0 --raid-devices=2 "$LOOP_DEVICE" "$REMOTE_NVME"
 fi
 
 # --- STEP 5: EXPORT VIA NVMe-oF TARGET ---
