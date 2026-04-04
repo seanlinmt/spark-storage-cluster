@@ -183,3 +183,33 @@ Because this architecture relies heavily on tight coupling through RAID0, both n
 - **Recovery**:
   1. Reboot Node 2 and run its boot sequence (make sure it exposes its loop device target natively again).
   2. On Node 1, restart the NVMe-oF connection. It may be necessary to run the `nvme-boot-node1.sh` bootstrap sequence to clear stalled NVMe queues, rescan block targets, and cleanly re-assemble `/dev/md0` from both legs without data collision.
+
+### When the Cluster Fails, What to Run?
+
+It depends on the failure type:
+
+#### 1. GFS2/Pacemaker Won't Mount (Most Common)
+The NVMe fabric is up but Pacemaker gave up. Just:
+```bash
+sudo pcs resource cleanup gfs2-nvmeof
+```
+This is the lightest fix. Pacemaker retries the mount immediately.
+
+#### 2. NVMe-oF Fabric is Down (Node Can't See the Remote Subsystem)
+You need to re-run the boot scripts. Use the service:
+```bash
+# On ai2.local FIRST (it exports to node1):
+sudo systemctl restart nvme-cluster-init
+
+# Then on ai.local (it imports from node2, builds RAID, exports back):
+sudo systemctl restart nvme-cluster-init
+
+# Then cleanup pacemaker if needed:
+sudo pcs resource cleanup gfs2-nvmeof
+```
+Order matters — node2 must export before node1 can import.
+
+#### 3. After a Reboot
+The service is enabled so it runs at boot automatically. If it doesn't start cleanly, `systemctl restart nvme-cluster-init` on node2 first, then node1, then `pcs resource cleanup`.
+
+**TL;DR:** Try `pcs resource cleanup gfs2-nvmeof` first. Only restart `nvme-cluster-init` if the fabric itself is broken.
