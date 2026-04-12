@@ -299,3 +299,53 @@ Order matters — node2 must export before node1 can import.
 The service is enabled so it runs at boot automatically. If it doesn't start cleanly, `systemctl restart nvme-cluster-init` on node2 first, then node1, then `pcs resource cleanup`.
 
 **TL;DR:** Try `pcs resource cleanup gfs2-nvmeof` first. Only restart `nvme-cluster-init` if the fabric itself is broken.
+
+
+#### 4. Advanced Recovery: Filesystem Withdraw & Repair
+
+If you see `recover_done ignored due to withdraw` in `dmesg` (Node 1) or `mount control error -4` (Node 2), GFS2 has locked itself down due to detected inconsistency. A simple `pcs resource cleanup` will not work.
+
+> [!CAUTION]
+> This procedure involves forcing unmounts and running a filesystem repair. Ensure no critical I/O is expected during this window.
+
+Follow these steps to recover:
+
+**1. Stop Pacemaker from retrying (On Node 1)**
+```bash
+sudo pcs resource disable gfs2-group-clone
+```
+
+**2. Force unmount (On Node 1)**
+```bash
+# -f (force) and -l (lazy) to break the stall
+sudo umount -f /mnt/nvmeof
+sudo umount -l /mnt/nvmeof
+```
+
+**3. Verify everything is unmounted**
+```bash
+# Check on both nodes
+mount | grep nvmeof
+```
+
+**4. Stop the DLM**
+```bash
+sudo pcs resource disable dlm-clone
+sudo killall -9 dlm_controld
+```
+
+**5. Run filesystem check (On Node 1 only)**
+```bash
+# Run against the RAID device
+sudo fsck.gfs2 -y /dev/md0
+```
+
+**6. Re-enable the cluster resource (On Node 1)**
+```bash
+sudo pcs resource enable gfs2-group-clone
+sudo pcs resource cleanup gfs2-nvmeof
+```
+
+
+The GFS2 **withdraw** is a data protection mechanism. Running `fsck.gfs2` replays the journals and clears the error state, allowing the cluster to mount the volume again.
+
