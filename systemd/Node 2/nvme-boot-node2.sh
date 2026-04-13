@@ -11,6 +11,7 @@ set -euo pipefail
 NODE1_IP="192.168.177.11"
 NODE2_IP="192.168.177.12"
 NVMET_PORT="4420"
+LOOP_DEVICE="/dev/loop100"
 LOCAL_SUBSYSTEM="nqn.2026-03.dgx:node2-shared"
 REMOTE_SUBSYSTEM="nqn.2026-03.dgx:node1-shared"
 MOUNT_POINT="/mnt/nvmeof"
@@ -44,7 +45,7 @@ echo "[2/4] Configuring NVMe-oF target (exporting $SHARED_POOL to Node 1)..."
 
 LOOP_DEV=$(losetup -j "$SHARED_POOL" | cut -d: -f1 | head -n1)
 if [ -z "$LOOP_DEV" ]; then
-    LOOP_DEV=$(losetup -f --show "$SHARED_POOL")
+    LOOP_DEV=$(losetup --show "$LOOP_DEVICE" "$SHARED_POOL")
 fi
 echo "Loop device: $LOOP_DEV"
 
@@ -53,9 +54,13 @@ modprobe nvmet-rdma
 
 mkdir -p "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1"
 echo -n "$LOOP_DEV" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_path"
-# Get the UUID of the underlying device to ensure the export presents a stable, matching identifier
+# Get the UUID of the underlying device if it exists
 DEVICE_UUID=$(lsblk -no UUID "$LOOP_DEV")
-echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+if [ -z "$DEVICE_UUID" ]; then
+    echo "  Notice: No UUID found on $LOOP_DEV, skipping device_uuid config."
+else
+    echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+fi
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
 # Host ACLs - only allow Node 1 to import this export

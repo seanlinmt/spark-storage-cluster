@@ -20,7 +20,6 @@ set -uo pipefail
 NODE1_IP="192.168.177.11"
 NODE2_IP="192.168.177.12"
 MD_DEVICE="/dev/md0"
-LOOP_DEVICE="/dev/loop27"
 MOUNT_POINT="/mnt/nvmeof"
 SHARED_POOL="/shared_pool.img"
 

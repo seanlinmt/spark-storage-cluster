@@ -15,7 +15,7 @@ NVMET_PORT="4420"
 LOCAL_SUBSYSTEM="nqn.2026-03.dgx:node1-shared"
 REMOTE_SUBSYSTEM="nqn.2026-03.dgx:node2-shared"
 MD_DEVICE="/dev/md0"
-LOOP_DEVICE="/dev/loop27"
+LOOP_DEVICE="/dev/loop101"
 MOUNT_POINT="/mnt/nvmeof"
 SHARED_POOL="/shared_pool.img"
 NODE1_HOSTNQN="nqn.2014-08.org.nvmexpress:uuid:b5f22a9e-bfe0-11d3-8b92-30c5993d9a55"
@@ -50,7 +50,7 @@ echo "[2/6] Setting up loop device..."
 # Force detach if it exists so we get a clean mapping
 losetup -d "$LOOP_DEVICE" 2>/dev/null || true
 
-# Map the file specifically to loop27
+# Map the file specifically to $LOOP_DEVICE
 if ! losetup "$LOOP_DEVICE" /shared_pool.img; then
     echo "ERROR: Failed to map /shared_pool.img to $LOOP_DEVICE"
     exit 1
@@ -149,9 +149,15 @@ modprobe nvmet-rdma
 
 mkdir -p "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1"
 echo -n "$MD_DEVICE" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_path"
+
 # Get the UUID of the underlying device to ensure the export presents a stable, matching identifier
 DEVICE_UUID=$(lsblk -no UUID "$MD_DEVICE")
-echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+if [ -z "$DEVICE_UUID" ]; then
+    echo "  Notice: No UUID found on $MD_DEVICE, skipping device_uuid config."
+else
+    echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
+fi
+
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
 # Host ACLs - restrict to node1 and node2 only (no allow_any_host)
