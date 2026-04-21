@@ -66,9 +66,11 @@ sudo apt install -y nvme-cli mdadm pacemaker corosync pcs gfs2-utils dlm-control
 
 Create the backing image file and attach it to a loop device. Run this on both Node 1 and Node 2:
 
+_(Note: When creating the loop device, a 650GB size seems to work well in ensuring that root storage does not run out of space, as shrinking the shared storage later requires the destruction of the volume.)_
+
 ```bash
-# Create a 100GB sparse file for the shared pool (adjust size as needed)
-dd if=/dev/zero of=/shared_pool.img bs=1M count=0 seek=102400
+# Create a 650GB sparse file for the shared pool (adjust size as needed)
+dd if=/dev/zero of=/shared_pool.img bs=1M count=0 seek=665600
 
 # Attach to the specific loop device
 losetup /dev/loop100 /shared_pool.img
