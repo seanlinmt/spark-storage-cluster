@@ -187,6 +187,7 @@ mkdir -p "$MOUNT_POINT"
 echo "mdadm.conf updated. Mount point $MOUNT_POINT ready."
 
 # Clear any stale Pacemaker standby state so resources can start on both nodes
+systemctl start pacemaker
 if command -v pcs &>/dev/null; then
     pcs node unstandby "$NODE1_IP" 2>/dev/null || true
     pcs node unstandby "$NODE2_IP" 2>/dev/null || true
