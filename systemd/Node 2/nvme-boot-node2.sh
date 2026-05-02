@@ -17,6 +17,10 @@ REMOTE_SUBSYSTEM="nqn.2026-03.dgx:node1-shared"
 MOUNT_POINT="/mnt/nvmeof"
 SHARED_POOL="/shared_pool.img"
 NODE1_HOSTNQN="nqn.2014-08.org.nvmexpress:uuid:b5f22a9e-bfe0-11d3-8b92-30c5993d9a55"
+# Fixed NVMe target identifiers — MUST be stable across reboots to prevent
+# "identifiers changed for nsid" errors that break RAID0 on the initiator side.
+LOCAL_SERIAL="node2-shared-serial-001"
+LOCAL_NGUID="b414560d-fe26-8742-0c48-82ab4989780f"
 
 echo "=========================================="
 echo "NVMe-oF Cluster Bootstrap - Node 2"
@@ -54,7 +58,14 @@ modprobe nvmet-rdma
 
 mkdir -p "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1"
 echo -n "$LOOP_DEV" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_path"
-# Get the UUID of the underlying device if it exists
+
+# Pin serial number so initiators see the same identity after reboots
+echo "$LOCAL_SERIAL" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/attr_serial"
+
+# Pin namespace UUID (nguid) for stable device identification
+echo "$LOCAL_NGUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_nguid"
+
+# Also set device_uuid from the filesystem if available
 DEVICE_UUID=$(lsblk -no UUID "$LOOP_DEV")
 if [ -z "$DEVICE_UUID" ]; then
     echo "  Notice: No UUID found on $LOOP_DEV, skipping device_uuid config."

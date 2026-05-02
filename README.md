@@ -284,10 +284,10 @@ This is the lightest fix. Pacemaker retries the mount immediately.
 You need to re-run the boot scripts. Use the service:
 
 ```bash
-# On ai2.local FIRST (it exports to node1):
+# On ai2 FIRST (it exports to node1):
 sudo systemctl restart nvme-cluster-init
 
-# Then on ai.local (it imports from node2, builds RAID, exports back):
+# Then on ai (it imports from node2, builds RAID, exports back):
 sudo systemctl restart nvme-cluster-init
 
 # Then cleanup pacemaker if needed:
@@ -302,7 +302,87 @@ The service is enabled so it runs at boot automatically. If it doesn't start cle
 
 **TL;DR:** Try `pcs resource cleanup gfs2-nvmeof` first. Only restart `nvme-cluster-init` if the fabric itself is broken.
 
-#### 4. Advanced Recovery: Filesystem Withdraw & Repair
+#### 4. RAID0 Broken — NVMe Identifiers Changed (Most Severe)
+
+**Symptoms:**
+- `cat /proc/mdstat` shows `md0 : broken raid0`
+- `dmesg` on Node 1 shows: `nvme nvme1: identifiers changed for nsid 1`
+- `pcs status` shows `gfs2-nvmeof start returned 'not installed'` on Node 2
+- GFS2 may be stale-mounted on Node 1 but Node 2 cannot mount
+
+**Root Cause:**
+
+When a node reboots, it destroys and re-creates its NVMe-oF target. If the NVMe target serial number or namespace identifier changes between reboots, the NVMe initiator on the other node detects the mismatch and rejects the reconnected path. The RAID0 array then marks the NVMe leg as failed and enters a permanent `broken` state.
+
+The kernel `broken` state for RAID0 **cannot be cleared without a reboot** — `mdadm --stop` will fail with "Cannot get exclusive access" because the kernel holds a stale reference to the ghost device.
+
+> [!CAUTION]
+> A broken RAID0 requires rebooting **both** nodes. The GFS2 filesystem should be checked with `fsck.gfs2` before remounting, as I/O errors likely corrupted journal state.
+
+**Recovery Steps:**
+
+**1. Disable Pacemaker resources and unmount (On Node 1)**
+
+```bash
+sudo pcs resource disable gfs2-group-clone
+sudo umount -f /mnt/nvmeof
+sudo umount -l /mnt/nvmeof
+sudo pcs resource disable dlm-clone
+sudo killall -9 dlm_controld
+```
+
+**2. Put both nodes in standby and re-enable resources for after reboot**
+
+```bash
+sudo pcs node standby 192.168.177.11
+sudo pcs node standby 192.168.177.12
+sudo pcs resource enable dlm-clone
+sudo pcs resource enable gfs2-group-clone
+```
+
+**3. Reboot both nodes (Node 2 FIRST)**
+
+```bash
+# On ai2:
+sudo reboot
+
+# On ai (immediately after):
+sudo reboot
+```
+
+Node 2 must come up first so its NVMe target is available when Node 1's boot script runs.
+
+**4. Wait for boot scripts to complete**
+
+After both nodes are back up, check that the services completed:
+
+```bash
+# On both nodes:
+systemctl status nvme-cluster-init
+```
+
+**5. Run filesystem check (On Node 1 only)**
+
+```bash
+sudo fsck.gfs2 -y /dev/md0
+```
+
+**6. Unstandby nodes and clean up Pacemaker**
+
+```bash
+sudo pcs resource cleanup
+sudo pcs node unstandby 192.168.177.11
+sudo pcs node unstandby 192.168.177.12
+```
+
+**7. Verify the cluster is healthy**
+
+```bash
+pcs status
+mount | grep nvmeof   # both nodes should show the mount
+```
+
+#### 5. Advanced Recovery: Filesystem Withdraw & Repair
 
 If you see `recover_done ignored due to withdraw` in `dmesg` (Node 1) or `mount control error -4` (Node 2), GFS2 has locked itself down due to detected inconsistency. A simple `pcs resource cleanup` will not work.
 
@@ -354,3 +434,29 @@ sudo pcs resource cleanup gfs2-nvmeof
 ```
 
 The GFS2 **withdraw** is a data protection mechanism. Running `fsck.gfs2` replays the journals and clears the error state, allowing the cluster to mount the volume again.
+
+## NVMe Target Identity Stability
+
+### The Problem
+
+The Linux `nvmet` kernel module generates a **random serial number** for each NVMe-oF subsystem when it is created. If a node reboots and re-creates its target, the serial changes. NVMe initiators that reconnect will detect the identity mismatch (`identifiers changed for nsid 1`) and reject the path, which breaks RAID0 arrays built on top of NVMe-oF devices.
+
+### The Fix
+
+The boot scripts (`nvme-boot-node1.sh`, `nvme-boot-node2.sh`) pin three stable identifiers for each NVMe target:
+
+| Identifier | Purpose | Set via |
+|------------|---------|---------|
+| `attr_serial` | Subsystem serial number | `/sys/kernel/config/nvmet/subsystems/.../attr_serial` |
+| `device_nguid` | Namespace globally unique ID | `.../namespaces/1/device_nguid` |
+| `device_uuid` | Namespace UUID (from filesystem) | `.../namespaces/1/device_uuid` |
+
+These values are hardcoded in the boot scripts and **must not change** unless the cluster is being rebuilt from scratch.
+
+### Prevention Checklist
+
+- **Never modify** `LOCAL_SERIAL` or `LOCAL_NGUID` in the boot scripts unless recreating the cluster
+- **Always reboot Node 2 first** when both nodes need to restart — Node 1 depends on Node 2's target
+- **Use `nvme-safe-reboot.sh`** for graceful shutdowns instead of raw `reboot`
+- The **health check timer** (`nvme-cluster-health.timer`) monitors for broken RAID0 and NVMe identifier changes
+

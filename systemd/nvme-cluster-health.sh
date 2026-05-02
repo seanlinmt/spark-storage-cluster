@@ -32,12 +32,22 @@ fi
 if [[ "$NODE_ID" -eq 1 ]]; then
     if [[ -b "$MD_DEVICE" ]]; then
         RAID_STATUS=$(cat /proc/mdstat | grep -A1 "^md0" || true)
-        if echo "$RAID_STATUS" | grep -q "\[U_\]\|\[_U\]"; then
+        if echo "$RAID_STATUS" | grep -q "broken"; then
+            echo "HEALTH CHECK: RAID0 BROKEN - NVMe leg failed (identifiers likely changed)"
+            echo "  Recovery: reboot both nodes (node2 first, then node1), then run fsck.gfs2 -y /dev/md0"
+            HEALTH_ISSUES=$((HEALTH_ISSUES + 1))
+        elif echo "$RAID_STATUS" | grep -q "\[U_\]\|\[_U\]"; then
             echo "HEALTH CHECK: RAID0 degraded - missing disk"
             HEALTH_ISSUES=$((HEALTH_ISSUES + 1))
         fi
     else
         echo "HEALTH CHECK: RAID0 device $MD_DEVICE not found"
+        HEALTH_ISSUES=$((HEALTH_ISSUES + 1))
+    fi
+
+    # Check for NVMe identifier change errors (precursor to RAID break)
+    if dmesg | tail -100 | grep -q "identifiers changed for nsid"; then
+        echo "HEALTH CHECK: NVMe identifiers changed - RAID0 break imminent or occurred"
         HEALTH_ISSUES=$((HEALTH_ISSUES + 1))
     fi
 fi
