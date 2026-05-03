@@ -5,6 +5,9 @@
 #   Node2 exports /shared_pool.img via NVMe-oF (node2-shared)
 #   Node1 assembles RAID0 and exports combined volume (node1-shared)
 #   Node2 imports node1-shared and mounts /mnt/nvmeof via GFS2 (managed by Pacemaker)
+#
+# Safety: This script is idempotent. If the cluster is already healthy,
+# it exits immediately without touching anything.
 
 set -euo pipefail
 
@@ -19,28 +22,92 @@ SHARED_POOL="/shared_pool.img"
 NODE1_HOSTNQN="nqn.2014-08.org.nvmexpress:uuid:b5f22a9e-bfe0-11d3-8b92-30c5993d9a55"
 # Fixed NVMe target identifiers — MUST be stable across reboots to prevent
 # "identifiers changed for nsid" errors that break RAID0 on the initiator side.
-LOCAL_SERIAL="node2-shared-serial-001"
-LOCAL_NGUID="b414560d-fe26-8742-0c48-82ab4989780f"
+LOCAL_SERIAL="node2-serial-001"
+LOCAL_NGUID="b414560dfe2687420c4882ab4989780f"
 
 echo "=========================================="
 echo "NVMe-oF Cluster Bootstrap - Node 2"
 echo "=========================================="
 
-# --- STEP 1: CLEANUP STALE STATE ---
+# ============================================================
+# HEALTH CHECK — skip destructive cleanup if cluster is healthy
+# ============================================================
+check_healthy() {
+    local healthy=true
+
+    # 1. Loop device mapped?
+    if ! losetup -j "$SHARED_POOL" | grep -q .; then
+        echo "  [health] Loop device not mapped"
+        healthy=false
+    fi
+
+    # 2. NVMe target (node2-shared) exported?
+    if [ ! -d "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM" ]; then
+        echo "  [health] NVMe target not exported"
+        healthy=false
+    fi
+
+    # 3. Remote block device exists and has UUID symlink?
+    local remote_dev
+    remote_dev=$(find_remote_device 2>/dev/null || echo "")
+    if [ -z "$remote_dev" ] || [ ! -b "$remote_dev" ]; then
+        echo "  [health] Remote block device not found"
+        healthy=false
+    fi
+
+    $healthy
+}
+
+# Helper: find the block device for the remote NVMe subsystem
+find_remote_device() {
+    for subsys in /sys/class/nvme-subsystem/nvme-subsys*; do
+        [ -e "$subsys/subsysnqn" ] || continue
+        if grep -q "$REMOTE_SUBSYSTEM" "$subsys/subsysnqn" 2>/dev/null; then
+            for ns_dev in "$subsys"/nvme*n*; do
+                [ -e "$ns_dev" ] || continue
+                local dev_name
+                dev_name=$(basename "$ns_dev")
+                if [ -b "/dev/$dev_name" ]; then
+                    echo "/dev/$dev_name"
+                    return 0
+                fi
+            done
+        fi
+    done
+    return 1
+}
+
+echo "[0/4] Running health check..."
+if check_healthy; then
+    echo "Cluster is HEALTHY — nothing to do."
+    exit 0
+fi
+echo "  Cluster needs repair — proceeding with bootstrap."
+
+# ============================================================
+# STEP 1: TARGETED CLEANUP (only break what's already broken)
+# ============================================================
 echo "[1/4] Cleaning up stale state..."
 
-umount -l "$MOUNT_POINT" 2>/dev/null || true
-nvme disconnect-all 2>/dev/null || true
+# Unmount GFS2 if mounted
+if mount | grep -q "$MOUNT_POINT"; then
+    umount -l "$MOUNT_POINT" 2>/dev/null || true
+fi
 
+# Disconnect from Node 1 ONLY (not disconnect-all, which would kill Node 1's
+# active connection to our target if Node 1 happens to be connected)
+nvme disconnect -n "$REMOTE_SUBSYSTEM" 2>/dev/null || true
+
+# Clean up OUR NVMe target configuration only
 rm -f /sys/kernel/config/nvmet/ports/2/subsystems/* 2>/dev/null || true
 rmdir /sys/kernel/config/nvmet/ports/2 2>/dev/null || true
-for ns in /sys/kernel/config/nvmet/subsystems/*/namespaces/*; do
+for ns in /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM"/namespaces/*; do
   [ -d "$ns" ] || continue
   echo 0 > "$ns/enable" 2>/dev/null || true
   rmdir "$ns" 2>/dev/null || true
 done
-rm -f /sys/kernel/config/nvmet/subsystems/*/allowed_hosts/* 2>/dev/null || true
-rmdir /sys/kernel/config/nvmet/subsystems/* 2>/dev/null || true
+rm -f /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM"/allowed_hosts/* 2>/dev/null || true
+rmdir /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM" 2>/dev/null || true
 rmdir /sys/kernel/config/nvmet/hosts/* 2>/dev/null || true
 echo "Cleanup done."
 
@@ -95,62 +162,41 @@ echo "Target listening on $NODE2_IP:$NVMET_PORT -> $LOCAL_SUBSYSTEM (node1 only)
 # --- STEP 3: CONNECT TO NODE 1 (combined RAID0 volume) ---
 echo "[3/4] Waiting for Node 1 ($NODE1_IP) to export $REMOTE_SUBSYSTEM..."
 
-
 modprobe nvme-rdma
 
-MAX_RETRIES=60
-RETRY=0
-until nvme discover -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" 2>/dev/null | grep -q "$REMOTE_SUBSYSTEM"; do
-    RETRY=$((RETRY + 1))
-    [ $RETRY -ge $MAX_RETRIES ] && { echo "ERROR: Timeout waiting for Node 1"; exit 1; }
-    echo "  Attempt $RETRY/$MAX_RETRIES..."
-    sleep 2
-done
+# Check if already connected and live
+if nvme list-subsys 2>/dev/null | grep -A2 "$REMOTE_SUBSYSTEM" | grep -q "live"; then
+    echo "  Already connected to Node 1 (live)."
+else
+    # Disconnect stale connection if any
+    nvme disconnect -n "$REMOTE_SUBSYSTEM" 2>/dev/null || true
+    sleep 1
 
-nvme connect -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" -n "$REMOTE_SUBSYSTEM" || true
-udevadm settle
-sleep 5
+    MAX_RETRIES=60
+    RETRY=0
+    until nvme discover -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" 2>/dev/null | grep -q "$REMOTE_SUBSYSTEM"; do
+        RETRY=$((RETRY + 1))
+        [ $RETRY -ge $MAX_RETRIES ] && { echo "ERROR: Timeout waiting for Node 1"; exit 1; }
+        echo "  Attempt $RETRY/$MAX_RETRIES..."
+        sleep 2
+    done
+
+    nvme connect -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" -n "$REMOTE_SUBSYSTEM" || true
+    udevadm settle
+    sleep 5
+fi
 
 # Safely find the exact device mapped to the remote NQN
 REMOTE_NVME=""
 echo "  Scanning for block device matching $REMOTE_SUBSYSTEM..."
 
 for ((i=1; i<=30; i++)); do
-    # First try: Check /sys/class/nvme-subsystem for the device
-    for subsys in /sys/class/nvme-subsystem/nvme-subsys*; do
-        [ -e "$subsys/subsysnqn" ] || continue
-        if grep -q "$REMOTE_SUBSYSTEM" "$subsys/subsysnqn" 2>/dev/null; then
-            # We found the subsystem, look for namespace devices (nvme*n* format)
-            for ns_dev in "$subsys"/nvme*n*; do
-                [ -e "$ns_dev" ] || continue
-                dev_name=$(basename "$ns_dev")
-                # Look for the actual block device in /dev/
-                if [ -b "/dev/$dev_name" ]; then
-                    REMOTE_NVME="/dev/$dev_name"
-                    echo "    Found via nvme-subsystem: $REMOTE_NVME"
-                    break 3
-                fi
-            done
-        fi
-    done
-    
-    # Second try: Check /sys/class/nvme directly (fallback)
-    for subsys in /sys/class/nvme/nvme[1-9]*; do
-        [ -e "$subsys/subsysnqn" ] || continue
-        if grep -q "$REMOTE_SUBSYSTEM" "$subsys/subsysnqn" 2>/dev/null; then
-            # We found the subsystem, look for namespace devices
-            for dev_dir in "$subsys"/nvme*n*; do
-                [ -e "$dev_dir" ] || continue
-                dev_name=$(basename "$dev_dir")
-                if [ -b "/dev/$dev_name" ]; then
-                    REMOTE_NVME="/dev/$dev_name"
-                    echo "    Found via nvme class: $REMOTE_NVME"
-                    break 3
-                fi
-            done
-        fi
-    done
-    
+    REMOTE_NVME=$(find_remote_device 2>/dev/null || echo "")
+    if [ -n "$REMOTE_NVME" ]; then
+        echo "    Found via nvme-subsystem: $REMOTE_NVME"
+        break
+    fi
+
     echo "    Attempt $i/30: Waiting for device to appear..."
     sleep 2
 done
@@ -172,11 +218,21 @@ echo "  UUID symlink ready."
 echo "[4/4] Preparing mount point..."
 mkdir -p "$MOUNT_POINT"
 
-# Clear any stale Pacemaker standby state so resources can start on both nodes
-systemctl start pacemaker
+# Pacemaker unstandby — run in background since pacemaker starts AFTER this script
+# (this service has Before=corosync.service pacemaker.service)
 if command -v pcs &>/dev/null; then
-    pcs node unstandby "$NODE1_IP" 2>/dev/null || true
-    pcs node unstandby "$NODE2_IP" 2>/dev/null || true
+    (
+        # Wait for pacemaker to be ready (max 120s)
+        for i in $(seq 1 24); do
+            if pcs status &>/dev/null; then
+                pcs node unstandby "$NODE1_IP" 2>/dev/null || true
+                pcs node unstandby "$NODE2_IP" 2>/dev/null || true
+                break
+            fi
+            sleep 5
+        done
+    ) &
+    disown
 fi
 
 echo ""
