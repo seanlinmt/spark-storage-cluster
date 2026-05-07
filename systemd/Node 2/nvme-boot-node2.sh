@@ -24,6 +24,7 @@ NODE1_HOSTNQN="nqn.2014-08.org.nvmexpress:uuid:b5f22a9e-bfe0-11d3-8b92-30c5993d9
 # "identifiers changed for nsid" errors that break RAID0 on the initiator side.
 LOCAL_SERIAL="node2-serial-001"
 LOCAL_NGUID="b414560dfe2687420c4882ab4989780f"
+LOCAL_UUID="22222222-2222-2222-2222-222222222222"
 
 echo "=========================================="
 echo "NVMe-oF Cluster Bootstrap - Node 2"
@@ -132,13 +133,8 @@ echo "$LOCAL_SERIAL" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/att
 # Pin namespace UUID (nguid) for stable device identification
 echo "$LOCAL_NGUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_nguid"
 
-# Also set device_uuid from the filesystem if available
-DEVICE_UUID=$(lsblk -no UUID "$LOOP_DEV")
-if [ -z "$DEVICE_UUID" ]; then
-    echo "  Notice: No UUID found on $LOOP_DEV, skipping device_uuid config."
-else
-    echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
-fi
+# Pin device_uuid for stable device identification
+echo "$LOCAL_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
 # Host ACLs - only allow Node 1 to import this export
@@ -237,7 +233,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Node 2 bootstrap complete!"
+echo "Node 2 bootstrap complete!"   
 echo "  Export: $NODE2_IP:$NVMET_PORT -> $LOCAL_SUBSYSTEM ($LOOP_DEV)"
 echo "  Import: $REMOTE_NVME <- Node 1 RAID0 (GFS2)"
 echo "  Mount : $MOUNT_POINT (GFS2, via Pacemaker)"

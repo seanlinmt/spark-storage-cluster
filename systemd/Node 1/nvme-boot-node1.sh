@@ -27,6 +27,7 @@ NODE2_HOSTNQN="nqn.2014-08.org.nvmexpress:uuid:1d0edabc-bfdf-11d3-8d2d-30c5993de
 # "identifiers changed for nsid" errors that break RAID0 on the initiator side.
 LOCAL_SERIAL="node1-serial-001"
 LOCAL_NGUID="44a4ab3929c14cdabb9df62843bd3b68"
+LOCAL_UUID="11111111-1111-1111-1111-111111111111"
 
 echo "=========================================="
 echo "NVMe-oF Cluster Bootstrap - Node 1"
@@ -257,13 +258,8 @@ echo "$LOCAL_SERIAL" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/att
 # Pin namespace UUID (nguid) for stable device identification
 echo "$LOCAL_NGUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_nguid"
 
-# Also set device_uuid from the filesystem if available
-DEVICE_UUID=$(lsblk -no UUID "$MD_DEVICE")
-if [ -z "$DEVICE_UUID" ]; then
-    echo "  Notice: No UUID found on $MD_DEVICE, skipping device_uuid config."
-else
-    echo "$DEVICE_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
-fi
+# Pin device_uuid for stable device identification
+echo "$LOCAL_UUID" > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/device_uuid"
 
 echo 1 > "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM/namespaces/1/enable"
 
