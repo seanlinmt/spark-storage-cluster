@@ -155,33 +155,10 @@ ln -sf "/sys/kernel/config/nvmet/subsystems/$LOCAL_SUBSYSTEM" \
 
 echo "Target listening on $NODE2_IP:$NVMET_PORT -> $LOCAL_SUBSYSTEM (node1 only)"
 
-# --- STEP 3: CONNECT TO NODE 1 (combined RAID0 volume) ---
-echo "[3/4] Waiting for Node 1 ($NODE1_IP) to export $REMOTE_SUBSYSTEM..."
+# --- STEP 3: WAIT FOR STACD TO CONNECT TO NODE 1 (combined RAID0 volume) ---
+echo "[3/4] Waiting for stacd to connect to Node 1 ($REMOTE_SUBSYSTEM)..."
 
 modprobe nvme-rdma
-
-# Check if already connected and live
-if nvme list-subsys 2>/dev/null | grep -A2 "$REMOTE_SUBSYSTEM" | grep -q "live"; then
-    echo "  Already connected to Node 1 (live)."
-else
-    # Disconnect stale connection if any
-    nvme disconnect -n "$REMOTE_SUBSYSTEM" 2>/dev/null || true
-    sleep 1
-
-    MAX_RETRIES=60
-    RETRY=0
-    until nvme discover -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" 2>/dev/null | grep -q "$REMOTE_SUBSYSTEM"; do
-        RETRY=$((RETRY + 1))
-        [ $RETRY -ge $MAX_RETRIES ] && { echo "ERROR: Timeout waiting for Node 1"; exit 1; }
-        echo "  Attempt $RETRY/$MAX_RETRIES..."
-        sleep 2
-    done
-
-    nvme connect -t rdma -a "$NODE1_IP" -s "$NVMET_PORT" -n "$REMOTE_SUBSYSTEM" || true
-    udevadm settle
-    sleep 5
-fi
-
 # Safely find the exact device mapped to the remote NQN
 REMOTE_NVME=""
 echo "  Scanning for block device matching $REMOTE_SUBSYSTEM..."

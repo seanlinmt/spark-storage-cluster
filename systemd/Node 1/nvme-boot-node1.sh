@@ -140,65 +140,38 @@ echo "Loop device ready: $LOOP_DEV ($((LOOP_SIZE/1024/1024/1024)) GB)"
 # Update LOOP_DEVICE to whatever we actually got
 LOOP_DEVICE="$LOOP_DEV"
 
-# --- STEP 3: CONNECT TO NODE 2 ---
-# Skip if RAID is already active (no need to disconnect/reconnect)
-if [ "$RAID_NEEDS_REBUILD" = true ]; then
-    echo "[3/6] Waiting for Node 2 ($NODE2_IP) to export $REMOTE_SUBSYSTEM..."
+# --- STEP 3: WAIT FOR STACD TO CONNECT TO NODE 2 ---
+echo "[3/6] Waiting for stacd to connect to Node 2 ($REMOTE_SUBSYSTEM)..."
 
-    modprobe nvme-rdma
+modprobe nvme-rdma
+# stacd handles the actual connection in the background. We just wait for the device.
 
-    # Check if already connected and live
-    if nvme list-subsys 2>/dev/null | grep -A2 "$REMOTE_SUBSYSTEM" | grep -q "live"; then
-        echo "  Already connected to Node 2 (live)."
-    else
-        # Disconnect stale connection if any (connecting/reconnecting state)
-        nvme disconnect -n "$REMOTE_SUBSYSTEM" 2>/dev/null || true
-        sleep 1
+REMOTE_NVME=""
+echo "[3/6] Scanning for block device matching $REMOTE_SUBSYSTEM..."
 
-        MAX_RETRIES=150
-        RETRY=0
-        until nvme discover -t rdma -a "$NODE2_IP" -s "$NVMET_PORT" 2>/dev/null | grep -q "$REMOTE_SUBSYSTEM"; do
-            RETRY=$((RETRY + 1))
-            [ $RETRY -ge $MAX_RETRIES ] && { echo "ERROR: Timeout waiting for Node 2"; exit 1; }
-            echo "  Attempt $RETRY/$MAX_RETRIES..."
-            sleep 2
-        done
+for ((i=1; i<=150; i++)); do
+    # Find the subsystem directory matching our remote NQN
+    # || echo "" keeps pipefail from triggering on empty results
+    SUB_DIR=$(grep -l "$REMOTE_SUBSYSTEM" /sys/class/nvme-subsystem/nvme-subsys*/subsysnqn 2>/dev/null | xargs dirname 2>/dev/null || echo "")
 
-        nvme connect -t rdma -a "$NODE2_IP" -s "$NVMET_PORT" -n "$REMOTE_SUBSYSTEM" || true
-        udevadm settle
-        sleep 3
-    fi
+    if [ -n "$SUB_DIR" ]; then
+        # Use discovered $SUB_DIR (not hardcoded subsys index) to find namespace
+        DEV_NAME=$(find -L "$SUB_DIR" -maxdepth 1 -name "nvme[1-9]*n[1-9]*" -print -quit 2>/dev/null | xargs basename 2>/dev/null || echo "")
 
-    REMOTE_NVME=""
-    echo "[3/6] Scanning for block device matching $REMOTE_SUBSYSTEM..."
+        if [ -n "$DEV_NAME" ]; then
+            DEV_NAME=$(echo "$DEV_NAME" | tr -d '[:space:]')
 
-    for ((i=1; i<=30; i++)); do
-        SUB_DIR=$(grep -l "$REMOTE_SUBSYSTEM" /sys/class/nvme-subsystem/nvme-subsys*/subsysnqn 2>/dev/null | xargs dirname 2>/dev/null || echo "")
-
-        if [ -n "$SUB_DIR" ]; then
-            DEV_NAME=$(find -L "$SUB_DIR" -maxdepth 1 -name "nvme[1-9]*n[1-9]*" -print -quit 2>/dev/null | xargs basename 2>/dev/null || echo "")
-
-            if [ -n "$DEV_NAME" ]; then
-                DEV_NAME=$(echo "$DEV_NAME" | tr -d '[:space:]')
-
-                if [ -b "/dev/$DEV_NAME" ]; then
-                    REMOTE_NVME="/dev/$DEV_NAME"
-                    echo "    Success: Found $REMOTE_NVME on attempt $i."
-                    break
-                fi
+            if [ -b "/dev/$DEV_NAME" ]; then
+                REMOTE_NVME="/dev/$DEV_NAME"
+                echo "    Success: Found $REMOTE_NVME on attempt $i."
+                break
             fi
         fi
-
-        echo "    Attempt $i/30: Waiting for $REMOTE_SUBSYSTEM..."
-        sleep 1
-    done
-
-    if [ -z "$REMOTE_NVME" ]; then
-        echo "ERROR: Device detection timed out. No block device found for $REMOTE_SUBSYSTEM."
-        echo "Current NVMe Subsystems found:"
-        grep -r "." /sys/class/nvme-subsystem/nvme-subsys*/subsysnqn 2>/dev/null || echo "None"
-        exit 1
     fi
+
+    echo "    Attempt $i/150: Waiting for $REMOTE_SUBSYSTEM from stacd..."
+    sleep 2
+done
 
     echo "Remote NVMe device $REMOTE_NVME"
 else

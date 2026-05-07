@@ -1,7 +1,8 @@
 [Unit]
 Description=NVMe-oF Clustered Storage Initialization
-After=network-online.target
+After=network-online.target stacd.service
 Wants=network-online.target
+Requires=stacd.service
 Before=corosync.service pacemaker.service remote-fs.pre.target
 StartLimitIntervalSec=300s
 StartLimitBurst=3

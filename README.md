@@ -59,8 +59,10 @@ Ensure that all required dependencies are installed on both Node 1 and Node 2:
 
 ```bash
 sudo apt update
-sudo apt install -y nvme-cli mdadm pacemaker corosync pcs gfs2-utils dlm-controld
+sudo apt install -y nvme-cli nvme-stas mdadm pacemaker corosync pcs gfs2-utils dlm-controld
 ```
+
+After installation, ensure the `stacd` daemon is enabled and configured with the provided `stacd.conf` on each node.
 
 ### 2. Create the Local Loop Device
 
@@ -152,14 +154,14 @@ The initialization order is critical, as Node 1's RAID assembly depends on Node 
 2. Initialize loop device (`/dev/loop100`) from `/shared_pool.img`.
 3. Load properties `nvmet` and `nvmet-rdma` modules.
 4. Expose the NVMe-oF target mapped to the local loop device over `NODE2_IP:4420`.
-5. Wait for the `node1-shared` target from Node 1 to become available.
-6. Connect to Node 1's target to map the combined RAID0 device.
+5. Wait for the `node1-shared` target from Node 1 to become available via `stacd`.
+6. The `stacd` background daemon connects to Node 1's target automatically. The script simply waits for the block device to appear.
 
 ### Node 1 Boot Up (`nvme-boot-node1.sh`)
 
 1. **Cleanup**: unmounts stale directories, stops inactive RAID blocks, flushes NVMe queues, removes configuration trees.
 2. **Loop Setup**: Force unbinds and re-maps `/shared_pool.img` directly to `/dev/loop100`. Validates block size successfully.
-3. **Connect to Node 2**: Probes `nvme-rdma`. Polls (up to 300 seconds) for Node 2 to export `node2-shared`. Connects target once available.
+3. **Wait for Node 2**: Probes `nvme-rdma`. The `stacd` daemon automatically discovers and connects to `node2-shared`. The script simply waits (up to 300 seconds) for the block device to appear.
 4. **Scan Protocol**: Performs robust, fail-safe background scanning over NVMe subsystem directories `nvme[1-9]*n[1-9]*` for the correct remote namespace.
 5. **Persistent RAID Assembly/Sync**: Employs `mdadm` to tie `/dev/loop100` + remote `node2` NVMe path to `/dev/md0`. Inits sync if missing metadata.
 6. **Export Target**: Creates NVMe Subsystem Target `node1-shared` tying to `/dev/md0`. Employs Host ACLs restricting to Node 1 and Node 2 via explicit NQN mapping.
