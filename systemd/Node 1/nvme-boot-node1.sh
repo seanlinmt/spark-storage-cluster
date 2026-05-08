@@ -149,6 +149,7 @@ modprobe nvme-rdma
 REMOTE_NVME=""
 echo "[3/6] Scanning for block device matching $REMOTE_SUBSYSTEM..."
 
+if [ "$RAID_NEEDS_REBUILD" = true ]; then
 for ((i=1; i<=150; i++)); do
     # Find the subsystem directory matching our remote NQN
     # || echo "" keeps pipefail from triggering on empty results

@@ -111,6 +111,54 @@ GFS2 requires DLM to coordinate file locks across both concurrent nodes.
 pcs resource create dlm ocf:pacemaker:controld op monitor interval=30s on-fail=fence clone interleave=true ordered=true
 ```
 
+### 6. Configure STONITH (SBD Watchdog-Only)
+
+**STONITH is required.** Without it, a DLM deadlock will hang both nodes during any network partition, leaving GFS2 completely frozen. The DGX Spark has no IPMI/iLO/PDU, so the recommended approach is **SBD in watchdog-only mode** using the on-board SBSA Generic Watchdog. This requires **no shared disk partition** and causes **zero data loss**.
+
+Install SBD on both nodes and remove the conflicting `watchdog` package:
+
+```bash
+sudo apt-get install -y sbd
+sudo dpkg --purge watchdog
+```
+
+Configure Pacemaker to use the SBD watchdog timeout (both nodes):
+
+```bash
+sudo pcs property set stonith-watchdog-timeout=10s
+sudo pcs property set stonith-enabled=true
+```
+
+SBD starts automatically as a dependency of `pacemaker.service` and `corosync.service`. You can verify it is running with:
+
+```bash
+sudo pcs status
+# Daemon Status should show: sbd: active/enabled
+```
+
+**Caveat — First-boot PID file:** On the very first start after installation, SBD may occasionally start faster than it can write its PID file, causing systemd to report `activating` instead of `active`. If this happens on boot, create the PID file manually and restart:
+
+```bash
+sudo pgrep -f 'sbd: inquisitor' | sudo tee /run/sbd.pid
+sudo systemctl restart pacemaker
+```
+
+After the first successful start, SBD writes `/run/sbd.pid` normally and this is no longer needed.
+
+### Files Changed / Added for This Feature
+
+The following files in this repository were modified or created when implementing SBD watchdog-only STONITH:
+
+| File | Change |
+|------|--------|
+| `systemd/Node 1/nvme-boot-node1.sh` | **Fixed syntax error** — added missing `if [ "$RAID_NEEDS_REBUILD" = true ]; then` before the `for` loop that waits for the remote NVMe device. Without this, the script failed with `unexpected token 'else'` whenever RAID0 needed rebuilding after a reboot. |
+| `README.md` | Added this STONITH configuration section. |
+
+The following runtime packages are installed on the nodes but are **not** part of this repository (managed via `apt`):
+
+- `sbd` — Shared-storage fencing daemon (watchdog-only mode)
+- `watchdog` — *Removed* to avoid conflict with SBD over `/dev/watchdog`
+
 ## Script Configuration
 
 Before deploying, make sure the variables align with your environment (default configuration used in the scripts provided).
