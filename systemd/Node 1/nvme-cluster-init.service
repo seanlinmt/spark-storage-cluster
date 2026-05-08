@@ -4,8 +4,7 @@ After=network-online.target stacd.service
 Wants=network-online.target
 Requires=stacd.service
 Before=corosync.service pacemaker.service remote-fs.pre.target
-StartLimitIntervalSec=300s
-StartLimitBurst=3
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

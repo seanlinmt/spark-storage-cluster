@@ -65,6 +65,14 @@ check_healthy() {
         healthy=false
     fi
 
+    # 4. Remote NVMe device present?
+    local remote_dev
+    remote_dev=$(grep "^md0" /proc/mdstat 2>/dev/null | grep -oP 'nvme\S+' | sed 's/\[.*//' | head -1)
+    if [ -n "$remote_dev" ] && [ ! -b "/dev/$remote_dev" ]; then
+        echo "  [health] Remote NVMe device /dev/$remote_dev missing"
+        healthy=false
+    fi
+
     $healthy
 }
 
@@ -174,6 +182,23 @@ for ((i=1; i<=150; i++)); do
     sleep 2
 done
 
+    if [ -z "$REMOTE_NVME" ]; then
+        echo "ERROR: Remote NVMe device not found after 300s. Node 2 may be down."
+        echo "  Performing cleanup and waiting for systemd retry..."
+        nvme disconnect -n "$REMOTE_SUBSYSTEM" 2>/dev/null || true
+        mdadm --stop "$MD_DEVICE" 2>/dev/null || true
+        rm -f /sys/kernel/config/nvmet/ports/1/subsystems/* 2>/dev/null || true
+        rmdir /sys/kernel/config/nvmet/ports/1 2>/dev/null || true
+        for ns in /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM"/namespaces/*; do
+          [ -d "$ns" ] || continue
+          echo 0 > "$ns/enable" 2>/dev/null || true
+          rmdir "$ns" 2>/dev/null || true
+        done
+        rm -f /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM"/allowed_hosts/* 2>/dev/null || true
+        rmdir /sys/kernel/config/nvmet/subsystems/"$LOCAL_SUBSYSTEM" 2>/dev/null || true
+        echo "Cleanup complete. Exiting with error to trigger systemd restart."
+        exit 1
+    fi
     echo "Remote NVMe device $REMOTE_NVME"
 else
     echo "[3/6] RAID active — skipping NVMe reconnection."
@@ -219,6 +244,19 @@ fi
 
 # --- STEP 5: EXPORT VIA NVMe-oF TARGET ---
 echo "[5/6] Configuring NVMe-oF target..."
+
+# Safety: verify RAID is healthy before exporting to Node 2
+if [ ! -b "$MD_DEVICE" ]; then
+    echo "ERROR: RAID device $MD_DEVICE does not exist after assembly. Not exporting."
+    exit 1
+fi
+MD_SIZE=$(blockdev --getsize64 "$MD_DEVICE" 2>/dev/null || echo 0)
+if [ "$MD_SIZE" -eq 0 ]; then
+    echo "ERROR: RAID device $MD_DEVICE has zero size. Not exporting broken array."
+    mdadm --stop "$MD_DEVICE" 2>/dev/null || true
+    exit 1
+fi
+echo "  RAID verified: $MD_DEVICE ($((MD_SIZE/1024/1024/1024)) GB)"
 
 modprobe nvmet
 modprobe nvmet-rdma
