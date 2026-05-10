@@ -136,14 +136,16 @@ sudo pcs status
 # Daemon Status should show: sbd: active/enabled
 ```
 
-**Caveat — First-boot PID file:** On the very first start after installation, SBD may occasionally start faster than it can write its PID file, causing systemd to report `activating` instead of `active`. If this happens on boot, create the PID file manually and restart:
+**Fix — SBD PID file race condition:** The upstream `sbd.service` uses `Type=forking` with `PIDFile=/run/sbd.pid`. SBD's inquisitor process frequently fails to write this file before systemd's timeout, causing SBD to be killed and Pacemaker to fail with `Dependency failed`. This happens on **every reboot**, not just the first.
+
+The fix is a systemd drop-in that removes the `-p` flag from `ExecStart` and uses `ExecStartPost` to find the inquisitor process and write the PID file on its behalf:
 
 ```bash
-sudo pgrep -f 'sbd: inquisitor' | sudo tee /run/sbd.pid
-sudo systemctl restart pacemaker
+# Install the drop-in on both nodes:
+sudo mkdir -p /etc/systemd/system/sbd.service.d
+sudo cp systemd/sbd-fix-pidfile.conf /etc/systemd/system/sbd.service.d/override.conf
+sudo systemctl daemon-reload
 ```
-
-After the first successful start, SBD writes `/run/sbd.pid` normally and this is no longer needed.
 
 ### Files Changed / Added for This Feature
 
@@ -151,6 +153,7 @@ The following files in this repository were modified or created when implementin
 
 | File | Change |
 |------|--------|
+| `systemd/sbd-fix-pidfile.conf` | **Systemd drop-in** — fixes the SBD PID file race by removing `-p` from ExecStart and using `ExecStartPost` to find the inquisitor PID via `pgrep` and write `/run/sbd.pid`. Install to `/etc/systemd/system/sbd.service.d/override.conf`. |
 | `systemd/Node 1/nvme-boot-node1.sh` | **Fixed syntax error** — added missing `if [ "$RAID_NEEDS_REBUILD" = true ]; then` before the `for` loop that waits for the remote NVMe device. Without this, the script failed with `unexpected token 'else'` whenever RAID0 needed rebuilding after a reboot. |
 | `README.md` | Added this STONITH configuration section. |
 
