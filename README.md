@@ -136,9 +136,16 @@ sudo pcs status
 # Daemon Status should show: sbd: active/enabled
 ```
 
-**Fix — SBD PID file race condition:** The upstream `sbd.service` uses `Type=forking` with `PIDFile=/run/sbd.pid`. SBD's inquisitor process frequently fails to write this file before systemd's timeout, causing SBD to be killed and Pacemaker to fail with `Dependency failed`. This happens on **every reboot**, not just the first.
+**Fix 1 — SBD watchdog-only mode:** SBD 1.5.2 in diskless mode (no `SBD_DEVICE`) requires the `-W` flag to explicitly enable the watchdog. Without it, SBD immediately exits with `sbd failed` because it has no device to monitor and doesn't auto-enable the watchdog. Set this in `/etc/default/sbd`:
 
-The fix is a systemd drop-in that removes the `-p` flag from `ExecStart` and uses `ExecStartPost` to find the inquisitor process and write the PID file on its behalf:
+```bash
+# On both nodes — set SBD_OPTS to enable watchdog-only mode:
+sudo sed -i 's/^SBD_OPTS=$/SBD_OPTS="-W"/' /etc/default/sbd
+# Or install the reference config:
+sudo cp systemd/sbd-defaults.conf /etc/default/sbd
+```
+
+**Fix 2 — SBD PID file race condition:** The upstream `sbd.service` uses `Type=forking` with `PIDFile=/run/sbd.pid`. SBD's inquisitor process sometimes fails to write this file before systemd's timeout, causing SBD to be killed and Pacemaker to fail. A systemd drop-in adds an `ExecStartPost` fallback that finds the inquisitor and writes the PID file:
 
 ```bash
 # Install the drop-in on both nodes:
@@ -147,14 +154,16 @@ sudo cp systemd/sbd-fix-pidfile.conf /etc/systemd/system/sbd.service.d/override.
 sudo systemctl daemon-reload
 ```
 
+**Fix 3 — SBD boot ordering:** The drop-in also adds `After=nvme-cluster-init.service` to prevent SBD's watchdog from firing while the NVMe boot script is still running (which can block Corosync/Pacemaker for up to 300s).
+
 ### Files Changed / Added for This Feature
 
 The following files in this repository were modified or created when implementing SBD watchdog-only STONITH:
 
 | File | Change |
 |------|--------|
-| `systemd/sbd-fix-pidfile.conf` | **Systemd drop-in** — fixes the SBD PID file race by removing `-p` from ExecStart and using `ExecStartPost` to find the inquisitor PID via `pgrep` and write `/run/sbd.pid`. Install to `/etc/systemd/system/sbd.service.d/override.conf`. |
-| `systemd/Node 1/nvme-boot-node1.sh` | **Fixed syntax error** — added missing `if [ "$RAID_NEEDS_REBUILD" = true ]; then` before the `for` loop that waits for the remote NVMe device. Without this, the script failed with `unexpected token 'else'` whenever RAID0 needed rebuilding after a reboot. |
+| `systemd/sbd-defaults.conf` | **SBD configuration** — reference `/etc/default/sbd` with `SBD_OPTS="-W"` for diskless/watchdog-only mode. Without `-W`, SBD 1.5.2 fails immediately. |
+| `systemd/sbd-fix-pidfile.conf` | **Systemd drop-in** — fixes PID file race via `ExecStartPost` fallback, adds boot ordering after `nvme-cluster-init`, and increases `TimeoutStartSec`. Install to `/etc/systemd/system/sbd.service.d/override.conf`. |
 | `README.md` | Added this STONITH configuration section. |
 
 The following runtime packages are installed on the nodes but are **not** part of this repository (managed via `apt`):
