@@ -18,7 +18,6 @@ scp $SSH_OPTS "systemd/nvme-cluster-health.timer" $NODE1_IP:/tmp/
 scp $SSH_OPTS "systemd/corosync.service" $NODE1_IP:/tmp/
 scp $SSH_OPTS "systemd/pacemaker.service" $NODE1_IP:/tmp/
 scp $SSH_OPTS "systemd/sbd-fix-pidfile.conf" $NODE1_IP:/tmp/
-scp $SSH_OPTS "systemd/sbd-defaults.conf" $NODE1_IP:/tmp/
 
 ssh $SSH_OPTS $NODE1_IP '
   sudo mv /tmp/corosync.conf /etc/corosync/corosync.conf
@@ -38,7 +37,7 @@ ssh $SSH_OPTS $NODE1_IP '
   sudo chown root:root /etc/stas/stacd.conf
   sudo mkdir -p /etc/systemd/system/sbd.service.d
   sudo mv /tmp/sbd-fix-pidfile.conf /etc/systemd/system/sbd.service.d/override.conf
-  sudo mv /tmp/sbd-defaults.conf /etc/default/sbd
+  sudo rm -f /etc/default/sbd
   sudo systemctl daemon-reload
   sudo systemctl enable --now stacd
   sudo systemctl enable --now nvme-cluster-health.timer
@@ -57,7 +56,6 @@ scp $SSH_OPTS "systemd/nvme-cluster-health.timer" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/corosync.service" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/pacemaker.service" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/sbd-fix-pidfile.conf" $NODE2_IP:/tmp/
-scp $SSH_OPTS "systemd/sbd-defaults.conf" $NODE2_IP:/tmp/
 
 ssh $SSH_OPTS $NODE2_IP '
   sudo mv /tmp/corosync.conf /etc/corosync/corosync.conf
@@ -77,7 +75,7 @@ ssh $SSH_OPTS $NODE2_IP '
   sudo chown root:root /etc/stas/stacd.conf
   sudo mkdir -p /etc/systemd/system/sbd.service.d
   sudo mv /tmp/sbd-fix-pidfile.conf /etc/systemd/system/sbd.service.d/override.conf
-  sudo mv /tmp/sbd-defaults.conf /etc/default/sbd
+  sudo rm -f /etc/default/sbd
   sudo systemctl daemon-reload
   sudo systemctl enable --now stacd
   sudo systemctl enable --now nvme-cluster-health.timer
