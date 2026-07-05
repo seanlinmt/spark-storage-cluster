@@ -1,0 +1,12 @@
+[Unit]
+Description=NVMe-oF Mini Storage Mount
+After=stacd.service
+
+[Mount]
+What=/dev/disk/by-uuid/16ded8bb-ac10-4327-925a-4aaeb2494248
+Where=/mnt/nvmeof-mini
+Type=ext4
+Options=defaults,noatime,nofail
+
+[Install]
+WantedBy=multi-user.target

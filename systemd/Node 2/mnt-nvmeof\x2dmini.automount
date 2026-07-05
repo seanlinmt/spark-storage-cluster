@@ -1,0 +1,10 @@
+[Unit]
+Description=NVMe-oF Mini Storage Automount
+After=stacd.service
+
+[Automount]
+Where=/mnt/nvmeof-mini
+TimeoutIdleSec=0
+
+[Install]
+WantedBy=multi-user.target

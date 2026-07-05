@@ -18,7 +18,7 @@ The architecture relies on a multi-tier storage mapping sequence leveraging NVMe
 
 _(Note: While these scripts map existing image files to loop devices for simplicity and flexibility, utilizing raw LVM (Logical Volume Manager) block volumes instead of loop devices is another highly recommended alternative for production environments.)_
 
-1. **Local Loop Setup:** Both Node 1 and Node 2 map a local image file (`/shared_pool.img`) to a specific loop device (e.g. `loop100`).
+1. **Local Loop Setup:** Both Node 1 and Node 2 map a local image file (`/shared_pool.img`) to a specific loop device (e.g. `loop100`). We pick a high number to prevent conflict with other loop devices as linux will incrementally assign loop device numbers.
 2. **First Export (Node 2 -> Node 1):** Node 2 configures an NVMe-oF target and exports its local loop device over the network to Node 1.
 3. **RAID0 Assembly (Node 1):** Node 1 connects to Node 2's target, mapping it as a local remote block device. It then uses `mdadm` to combine its own local loop device and Node 2's remote block device into a single RAID0 array (`/dev/md0`).
 4. **Second Export (Node 1 -> Node 2):** Node 1 configures another NVMe-oF target to export the newly created RAID0 block device back out to the cluster.

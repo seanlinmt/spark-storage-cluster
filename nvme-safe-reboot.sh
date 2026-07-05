@@ -8,12 +8,13 @@
 #
 # Teardown order:
 #   1. Put Pacemaker node into standby (unmounts GFS2 on this node)
-#   2. Disconnect NVMe-oF initiator connections
-#   3. Stop RAID array (Node 1 only)
-#   4. Remove NVMe-oF target exports
-#   5. Detach loop devices
-#   6. Stop Pacemaker/Corosync
-#   7. Reboot (unless --no-reboot)
+#   2. Unmount /mnt/nvmeof-mini (if mounted)
+#   3. Disconnect NVMe-oF initiator connections
+#   4. Stop RAID array (Node 1 only)
+#   5. Remove NVMe-oF target exports
+#   6. Detach loop devices
+#   7. Stop Pacemaker/Corosync
+#   8. Reboot (unless --no-reboot)
 
 set -uo pipefail
 
@@ -21,6 +22,8 @@ NODE1_IP="192.168.177.11"
 NODE2_IP="192.168.177.12"
 MD_DEVICE="/dev/md0"
 MOUNT_POINT="/mnt/nvmeof"
+MOUNT_POINT_MINI="/mnt/nvmeof-mini"
+MINI_SUBSYSTEM="nqn.2011-06.com.truenas:uuid:df582e73-2848-46f6-8dc3-1aa32b42d26d:mini"
 SHARED_POOL="/shared_pool.img"
 
 NO_REBOOT=false
@@ -44,7 +47,7 @@ echo "NVMe-oF Safe Reboot - Node $NODE_ID ($HOSTNAME)"
 echo "=========================================="
 
 # --- STEP 1: Pacemaker Standby ---
-echo "[1/6] Putting this node into Pacemaker standby..."
+echo "[1/7] Putting this node into Pacemaker standby..."
 if pcs status >/dev/null 2>&1; then
     pcs node standby "$LOCAL_IP"
     # Wait for GFS2 to unmount on this node
@@ -66,22 +69,31 @@ else
     umount -l "$MOUNT_POINT" 2>/dev/null || true
 fi
 
-# --- STEP 2: Disconnect NVMe-oF initiator ---
-echo "[2/6] Disconnecting NVMe-oF initiator connections..."
+# --- STEP 2: Unmount mini NVMe-oF mount ---
+echo "[2/7] Unmounting $MOUNT_POINT_MINI..."
+if mountpoint -q "$MOUNT_POINT_MINI" 2>/dev/null; then
+    umount "$MOUNT_POINT_MINI" 2>/dev/null || umount -l "$MOUNT_POINT_MINI" 2>/dev/null || true
+    echo "  $MOUNT_POINT_MINI unmounted."
+else
+    echo "  $MOUNT_POINT_MINI not mounted."
+fi
+
+# --- STEP 3: Disconnect NVMe-oF initiator ---
+echo "[3/7] Disconnecting NVMe-oF initiator connections..."
 nvme disconnect-all 2>/dev/null || true
 sleep 2
 
-# --- STEP 3: Stop RAID (Node 1 only) ---
+# --- STEP 4: Stop RAID (Node 1 only) ---
 if [[ "$NODE_ID" -eq 1 ]]; then
-    echo "[3/6] Stopping RAID array $MD_DEVICE..."
+    echo "[4/7] Stopping RAID array $MD_DEVICE..."
     mdadm --stop "$MD_DEVICE" 2>/dev/null || true
     sleep 1
 else
-    echo "[3/6] Skipping RAID teardown (Node 2 does not own RAID)."
+    echo "[4/7] Skipping RAID teardown (Node 2 does not own RAID)."
 fi
 
-# --- STEP 4: Remove NVMe-oF target exports ---
-echo "[4/6] Removing NVMe-oF target exports..."
+# --- STEP 5: Remove NVMe-oF target exports ---
+echo "[5/7] Removing NVMe-oF target exports..."
 # Unlink subsystems from port
 rm -f /sys/kernel/config/nvmet/ports/$PORT_NUM/subsystems/* 2>/dev/null || true
 rmdir /sys/kernel/config/nvmet/ports/$PORT_NUM 2>/dev/null || true
@@ -98,8 +110,8 @@ rm -f /sys/kernel/config/nvmet/subsystems/*/allowed_hosts/* 2>/dev/null || true
 rmdir /sys/kernel/config/nvmet/subsystems/* 2>/dev/null || true
 rmdir /sys/kernel/config/nvmet/hosts/* 2>/dev/null || true
 
-# --- STEP 5: Detach loop devices ---
-echo "[5/6] Detaching loop device..."
+# --- STEP 6: Detach loop devices ---
+echo "[6/7] Detaching loop device..."
 LOOP_DEV=$(losetup -j "$SHARED_POOL" 2>/dev/null | cut -d: -f1 | head -n1)
 if [[ -n "$LOOP_DEV" ]]; then
     losetup -d "$LOOP_DEV" 2>/dev/null || true
@@ -108,8 +120,8 @@ else
     echo "  No loop device attached to $SHARED_POOL"
 fi
 
-# --- STEP 6: Stop Pacemaker/Corosync ---
-echo "[6/6] Stopping cluster services..."
+# --- STEP 7: Stop Pacemaker/Corosync ---
+echo "[7/7] Stopping cluster services..."
 systemctl stop pacemaker 2>/dev/null || true
 systemctl stop corosync 2>/dev/null || true
 

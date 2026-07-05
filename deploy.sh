@@ -50,6 +50,8 @@ scp $SSH_OPTS "nvme-safe-reboot.sh" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/Node 2/nvme-boot-node2.sh" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/Node 2/nvme-cluster-init.service" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/Node 2/stacd.conf" $NODE2_IP:/tmp/
+scp $SSH_OPTS "systemd/Node 2/mnt-nvmeof\\x2dmini.mount" $NODE2_IP:/tmp/
+scp $SSH_OPTS "systemd/Node 2/mnt-nvmeof\\x2dmini.automount" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/nvme-cluster-health.sh" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/nvme-cluster-health.service" $NODE2_IP:/tmp/
 scp $SSH_OPTS "systemd/nvme-cluster-health.timer" $NODE2_IP:/tmp/
@@ -73,11 +75,17 @@ ssh $SSH_OPTS $NODE2_IP '
   sudo mkdir -p /etc/stas
   sudo mv /tmp/stacd.conf /etc/stas/stacd.conf
   sudo chown root:root /etc/stas/stacd.conf
+  sudo mv /tmp/mnt-nvmeof\\x2dmini.mount /etc/systemd/system/
+  sudo chown root:root /etc/systemd/system/mnt-nvmeof\\x2dmini.mount
+  sudo mv /tmp/mnt-nvmeof\\x2dmini.automount /etc/systemd/system/
+  sudo chown root:root /etc/systemd/system/mnt-nvmeof\\x2dmini.automount
   sudo mkdir -p /etc/systemd/system/sbd.service.d
   sudo mv /tmp/sbd-fix-pidfile.conf /etc/systemd/system/sbd.service.d/override.conf
   sudo rm -f /etc/default/sbd
   sudo systemctl daemon-reload
   sudo systemctl enable --now stacd
   sudo systemctl enable --now nvme-cluster-health.timer
+  sudo systemctl enable mnt-nvmeof\\x2dmini.automount
+  sudo systemctl start mnt-nvmeof\\x2dmini.automount || true
   echo "Node 2 deployment complete."
 '
