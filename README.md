@@ -491,7 +491,8 @@ sudo fsck.gfs2 -y /dev/md0
 **6. Re-enable the cluster resource (On Node 1)**
 
 ```bash
-sudo pcs resource enable gfs2-group-clone
+
+
 sudo pcs resource cleanup gfs2-nvmeof
 ```
 
