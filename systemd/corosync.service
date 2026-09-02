@@ -3,10 +3,11 @@ Description=Corosync Cluster Engine
 Documentation=man:corosync man:corosync.conf man:corosync_overview
 ConditionKernelCommandLine=!nocluster
 Requires=network-online.target
-After=network-online.target
+After=network-online.target nvme-cluster-init.service
 
 [Service]
 EnvironmentFile=-/etc/default/corosync
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do ip -4 addr show | grep -q "192.168.177\\." && exit 0; sleep 1; done; echo "RDMA IP not ready"; exit 1'
 ExecStart=/usr/sbin/corosync -f $COROSYNC_OPTIONS
 ExecStop=/usr/sbin/corosync-cfgtool -H --force
 Type=notify
@@ -18,15 +19,8 @@ Type=notify
 # in systemd-system.conf(5) and whether /dev/log is a systemd related symlink.
 StandardError=null
 
-# The following config is for corosync with enabled watchdog service.
-#
-#  When corosync watchdog service is being enabled and using with
-#  pacemaker.service, and if you want to exert the watchdog when a
-#  corosync process is terminated abnormally,
-#  uncomment the line of the following Restart= and RestartSec=.
-#Restart=on-failure
-#  Specify a period longer than soft_margin as RestartSec.
-#RestartSec=70
+Restart=on-failure
+RestartSec=5s
 #  rewrite according to environment.
 #ExecStartPre=/sbin/modprobe softdog
 PrivateTmp=yes
